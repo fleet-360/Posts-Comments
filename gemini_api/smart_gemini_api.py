@@ -4,90 +4,70 @@ from functions.func_consts import *
 
 
 def build_response_json(response):
-    result_text = response.candidates[0].content.parts[0].text
-    cut_text = result_text[result_text.find("{"): result_text.rfind("}") + 1]
-    result_json = json.loads(cut_text)
-    return result_json
+    try:
+        try:
+            result_text = response.candidates[0].content.parts[0].text
+            fixed_text = repair_json(result_text)
+            result_json = json.loads(fixed_text)
+            return result_json
+        except Exception as regular_convert_error:
+            result_text = response.candidates[0].content.parts[0].text
+            cut_text = result_text[result_text.find("[") + 1: result_text.rfind("}") + 1]
+            text_json = """ {"results": [ """ + cut_text + """ ]} """
+            result_json = json.loads(json.dumps(text_json, ensure_ascii=False))
+            return result_json
+    except Exception as manual_convert_error:
+        raise ("ERROR in build_response_json:", manual_convert_error)
 
 
-# -----------------------------
-# GEMINI CALL (SYNC)
-# -----------------------------
-def call_gemini_sync(prompt: str, gemini_api_key) -> Dict[str, Any]:
-    """Synchronous Gemini call using the official client."""
-    client = genai.Client(api_key=gemini_api_key)
+async def call_gemini(model, prompt: str):
+    # הגדרת הקונפיגורציה (אופציונלי, אפשר להשאיר ריק אם מוגדר ב-Client)
+    generation_config = {"response_mime_type": "application/json"}
 
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-    )
-
-    results_dict = build_response_json(response)  # convert to python dict
-    return results_dict
-
-
-# -----------------------------
-# ASYNC WRAPPER + RETRIES
-# -----------------------------
-async def call_gemini(prompt: str, gemini_api_key):
     for attempt in range(MAX_RETRIES):
         try:
-            return await asyncio.to_thread(call_gemini_sync, prompt, gemini_api_key)
+            response = await model.generate_content_async(
+                contents=prompt,
+                generation_config=generation_config
+            )
+            print("GEMINI WORKED")
+            return build_response_json(response)
 
-        except (ResourceExhausted, GoogleAPICallError) as e:
-            if attempt < MAX_RETRIES - 1:
-                print(f"ERROR in call_gemini: {e}. In attempt {attempt}...")
-                await asyncio.sleep(2 ** attempt)
-            else:
-                # raise e
-                print("ERROR in call_gemini - reached max retries:", e)
-                return None
         except Exception as e:
-            print("ERROR in call_gemini:", e)
-            return None
+            if attempt < MAX_RETRIES - 1:
+                wait_time = 2 ** attempt
+                # זיהוי שגיאות עומס
+                is_rate_limit = "429" in str(e) or "ResourceExhausted" in str(e)
+                msg = "Rate Limit" if is_rate_limit else "Error"
+
+                print(f"{msg} in call_gemini: {e}. Retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                print(f"FAILED all {MAX_RETRIES} call_gemini attempts: {e}")
+
+    return None
 
 
 # -----------------------------
 # PROCESS ONE BATCH
 # -----------------------------
-async def process_batch(semaphore, texts_dict, gemini_api_key):
+async def process_batch(semaphore, texts_dict, model):
     async with semaphore:
 
         full_prompt = PROMPT_BODY.replace("[INSERT_YOUR_TEXT_DICT_HERE]", str(texts_dict))
-        response = await call_gemini(full_prompt, gemini_api_key)
+        response = await call_gemini(model, full_prompt)
 
-        if response:
-            # turn from dict to df
-            df_results = pd.DataFrame(response["results"])
-            df_results["gemini_status"] = "success"
+        try:
+            if response and isinstance(response, dict) and "results" in response.keys():
+                # turn from dict to df
+                df_results = pd.DataFrame(response["results"])
+                df_results["gemini_status"] = "success"
 
-            return df_results
-        else:
+                return df_results
+            else:
+                return pd.DataFrame(columns=GEMINI_RESULT_COLUMNS)
+        except Exception as e:
             return pd.DataFrame(columns=GEMINI_RESULT_COLUMNS)
-
-
-# -----------------------------
-# WRITE BATCH TO CSV
-# -----------------------------
-def append_df_to_csv(df: pd.DataFrame, output_file: str, write_header: bool):
-    """
-    Append a slice of a DataFrame to a CSV file.
-
-    Parameters:
-        df_part (pd.DataFrame): The DataFrame slice to write.
-        output_file (str): Path to the CSV file.
-        write_header (bool): Whether to write the header row.
-    """
-    if df is None or df.empty:
-        return
-
-    df.to_csv(
-        output_file,
-        mode="a",  # append mode
-        header=write_header,  # write header only once
-        index=False,  # don't write pandas index
-        encoding="utf8"
-    )
 
 
 # -----------------------------
@@ -97,12 +77,15 @@ async def process_dataframe(df: pd.DataFrame, text_col: str, id_col: str, gemini
     print("in process_dataframe")
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    genai.configure(api_key=gemini_api_key)
+    model = genai.GenerativeModel(GEMINI_MODEL)
 
     tasks = []
     num_batches = math.ceil(len(df) / BATCH_SIZE)
 
-    headers_df = pd.DataFrame(columns=GEMINI_RESULT_COLUMNS)
-    headers_df.to_csv(output_file, mode="w",  header=True, index=False, encoding="utf8")
+    if not os.path.exists(output_file):
+        headers_df = pd.DataFrame(columns=GEMINI_RESULT_COLUMNS)
+        headers_df.to_csv(output_file, mode="w",  header=True, index=False, encoding="utf8")
 
     for batch_idx in range(num_batches):
         start = batch_idx * BATCH_SIZE
@@ -111,8 +94,9 @@ async def process_dataframe(df: pd.DataFrame, text_col: str, id_col: str, gemini
         mini_df = df.iloc[start:end]
         if not mini_df.empty:
             mini_dict = mini_df.set_index(id_col)[text_col].to_dict()
+            dict_json_str = json.dumps(mini_dict, ensure_ascii=False)
 
-            task = asyncio.create_task(process_batch(semaphore, mini_dict, gemini_api_key))
+            task = asyncio.create_task(process_batch(semaphore, dict_json_str, model))
             tasks.append(task)
 
     with open(output_file, "a", newline="", encoding="utf8") as f:
@@ -123,10 +107,12 @@ async def process_dataframe(df: pd.DataFrame, text_col: str, id_col: str, gemini
     f.close()
 
 
-def keep_relevant_rows(df, text_col):
+def keep_relevant_rows(df, text_col, df_type, output_path):
+    print("in keep_relevant_rows")
+
     def _is_relevant(text):
         # only keep rows that include either letters or emojis in the text column.
-        if str(text) in STR_NULL_VALUES:
+        if str(text).lower() in STR_NULL_VALUES:
             return False
         else:
             relevant_text_pattern = f"[{LANGUAGE_PATTERN}{EMOJIS_RANGE}]"
@@ -137,6 +123,15 @@ def keep_relevant_rows(df, text_col):
                 return False
 
     print("for GEMINI: original len of df:", len(df))
+
+    if os.path.exists(output_path):
+        # if past results exist, remove rows that already have a past result, by text_col.
+        existing_results = pd.read_csv(output_path)  # ,names=GEMINI_RESULT_COLUMNS, usecols=range(len(GEMINI_RESULT_COLUMNS))
+        df_w_gemini = pd.merge(df, existing_results, left_on=text_col, right_on="original_text", how="outer")
+        df_w_gemini["missing_response"] = df_w_gemini["gemini_status"].apply(lambda s: True if str(s).lower() in STR_NULL_VALUES else False)
+        df = df_w_gemini[df_w_gemini["missing_response"] == True]
+        df.drop([col for col in GEMINI_RESULT_COLUMNS + ["missing_response", "ex1", "ex2", "Unnamed: 0"] if col in df.columns], axis=1, inplace=True)
+
     df["relevant_text"] = df[text_col].apply(_is_relevant)
     filtered_df = df[df["relevant_text"] == True]
 
@@ -150,12 +145,23 @@ def keep_relevant_rows(df, text_col):
 def merge_gemini_result(df, output_file_path, text_col):
     print("in merge_gemini_result")
 
-    gemini_result = pd.read_csv(output_file_path)
+    gemini_result = pd.read_csv(output_file_path, names=GEMINI_RESULT_COLUMNS, usecols=range(len(GEMINI_RESULT_COLUMNS)))
     # merge with gemini results from csv. merge by text instead of id
     df_w_gemini = pd.merge(df, gemini_result, left_on=text_col, right_on="original_text", how="outer")
     # relevant text true and gemini_status none - failed, else none
-    df_w_gemini["gemini_status"] = df_w_gemini.apply(lambda row: "failed" if row["relevant_text"] == True and str(row["gemini_status"]) in STR_NULL_VALUES else row["gemini_status"], axis=1)
+    df_w_gemini["gemini_status"] = df_w_gemini.apply(lambda row: "failed" if row["relevant_text"] == True and
+                                                                 str(row["gemini_status"]).lower() in STR_NULL_VALUES
+                                                                 else row["gemini_status"], axis=1)
     return df_w_gemini
+
+
+def save_gemini_fails(df, output_path, df_type):
+    print("in save_gemini_fails")
+
+    failed_df = df[df["gemini_status"] == "failed"]
+    print(f"amount of gemini fails for df {df_type}: {len(failed_df)}")
+    failed_file_path = fr"{output_path}\{GEMINI_FAILS_FOLDER}\{df_type}_gemini_fails.csv"
+    failed_df.to_csv(failed_file_path)
 
 
 def no_gemini_requests(df):
@@ -170,11 +176,12 @@ def no_gemini_requests(df):
 def process_with_gemini(df, text_col, output_path, id_col, df_type, gemini_api_key):
     print("in process_with_gemini")
 
-    filtered_df = keep_relevant_rows(df, text_col)
+    output_file_path = fr"{output_path}\{GEMINI_SUCCESS_FOLDER}\{df_type}_gemini_results.csv"
+    filtered_df = keep_relevant_rows(df, text_col, df_type, output_file_path)
     if not filtered_df.empty:
-        output_file_path = fr"{output_path}\{GEMINI_RESULTS_FOLDER}\{df_type}_gemini_results.csv"
         asyncio.run(process_dataframe(filtered_df, text_col, id_col, gemini_api_key, output_file_path))
         result_df = merge_gemini_result(df, output_file_path, text_col)
+        save_gemini_fails(result_df, output_path, df_type)
     else:
         # process no gemini - add cols, status - none
         result_df = no_gemini_requests(df)

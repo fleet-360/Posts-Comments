@@ -5,10 +5,8 @@ def make_dir(outpath_folder):
     print("in make_dir")
 
     os.makedirs(outpath_folder, exist_ok=True)
-    os.makedirs(fr"{outpath_folder}\{FINAL_RESULTS_FOLDER}", exist_ok=True)
-    os.makedirs(fr"{outpath_folder}\{POSTS_RESULTS_FOLDER}", exist_ok=True)
-    os.makedirs(fr"{outpath_folder}\{COMMS_RESULTS_FOLDER}", exist_ok=True)
-    os.makedirs(fr"{outpath_folder}\{GEMINI_RESULTS_FOLDER}", exist_ok=True)
+    for folder_path in ALL_FOLDER_PATHS:
+        os.makedirs(fr"{outpath_folder}\{folder_path}", exist_ok=True)
 
 
 # doesn't fully work - csv too big, tsv bad data/separator.

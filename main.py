@@ -10,10 +10,10 @@ def main(post_path, comments_path, out_path_folder, gemini_api_key):
     make_dir(out_path_folder)
 
     posts = pd.read_csv(post_path)
-    comments = pd.read_csv(comments_path)
-
     posts = process_text_and_emojis(posts, POSTS_INFO["text_col"], POSTS_INFO["id_col"], POSTS_INFO["df_type"],
                                     POSTS_INFO["user_id_col"], out_path_folder, gemini_api_key)
+
+    comments = pd.read_csv(comments_path)
     comments = process_text_and_emojis(comments, COMMS_INFO["text_col"], COMMS_INFO["id_col"], COMMS_INFO["df_type"],
                                        COMMS_INFO["user_id_col"], out_path_folder, gemini_api_key)
 

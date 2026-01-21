@@ -11,18 +11,18 @@ def process_text(df, text_col, id_col, output_path, df_type, gemini_api_key):
     df["clean_text_with_emojis"] = df[text_col].apply(remove_chars)
     df = process_with_gemini(df, "clean_text_with_emojis", output_path, id_col, df_type, gemini_api_key)
     print("in remove_emojis")
-    df["fixed_text_no_emojis"] = df["fixed_text"].apply(remove_emojis)
+    df["fixed_text_no_emojis"] = df.apply(lambda row: remove_emojis(row, text_col), axis=1)
     return df
 
 
 def complete_user_language(df, user_id_col):
     print("in complete_user_language")
 
-    if any(str(val) in STR_NULL_VALUES for val in df["post_language"].unique()):
+    if any(str(val).lower() in STR_NULL_VALUES for val in df["post_language"].unique()):
         user_language_df = df.groupby(user_id_col)["post_language"].agg(lambda x: x.value_counts().idxmax() if not x.dropna().empty else None).reset_index()
         user_language_dict = user_language_df.set_index(user_id_col)["post_language"].to_dict()
         df["post_language"] = df.apply(lambda row: user_language_dict[row[user_id_col]]
-                                                   if str(row["post_language"]) in STR_NULL_VALUES
+                                                   if str(row["post_language"]).lower() in STR_NULL_VALUES
                                                    else row["post_language"], axis=1)
     return df
 

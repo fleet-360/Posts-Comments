@@ -1,6 +1,6 @@
 import json
 from google import genai
-from google.api_core.exceptions import GoogleAPICallError, ResourceExhausted
+# from google.api_core.exceptions import GoogleAPICallError, ResourceExhausted
 import pandas as pd
 import asyncio
 import csv
@@ -8,10 +8,12 @@ import math
 from typing import List, Dict, Any
 from google.genai import types
 import re
+from json_repair import repair_json
+import google.generativeai as genai
 
 GEMINI_MODEL = "gemini-2.0-flash"
 
-BATCH_SIZE = 100
+BATCH_SIZE = 5
 MAX_CONCURRENT_REQUESTS = 50
 MAX_RETRIES = 5
 
@@ -59,8 +61,7 @@ PROMPT_BODY = """
         Provide a brief text explanation justifying this score.
 
     Output Format:
-        Please return the result as a single JSON object containing a list of dictionaries under the key "results". Each dictionary must include the original input ID. All the values of the dictionary must be string.
-        JSON{
+        "{
           "results": [
             {
               "id": "Key_From_Input_Dict",
@@ -83,7 +84,7 @@ PROMPT_BODY = """
               "changes_made_summary": ""
             }
           ]
-        }
+        }"
 """
 
 # gemini api response example

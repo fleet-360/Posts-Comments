@@ -3,7 +3,9 @@ from functions.func_consts import *
 
 
 # for clean text
-def remove_emojis(text):
+def remove_emojis(row, text_col):
+    # if gemini failed, use original text_col instead.
+    text = row["fixed_text"] if str(row["fixed_text"]).lower() not in STR_NULL_VALUES else row[text_col]
     if str(text).lower() not in STR_NULL_VALUES:
         clean_text = re.sub(f"[{EMOJIS_RANGE}]", "", text)
         return clean_text

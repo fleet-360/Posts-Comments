@@ -7,6 +7,10 @@ FINAL_RESULTS_FOLDER = r"final results"
 POSTS_RESULTS_FOLDER = r"final results\posts"
 COMMS_RESULTS_FOLDER = r"final results\comments"
 GEMINI_RESULTS_FOLDER = r"gemini results"
+GEMINI_SUCCESS_FOLDER = r"gemini results\success"
+GEMINI_FAILS_FOLDER = r"gemini results\fails"
+ALL_FOLDER_PATHS = [FINAL_RESULTS_FOLDER, POSTS_RESULTS_FOLDER, COMMS_RESULTS_FOLDER,
+                    GEMINI_RESULTS_FOLDER, GEMINI_SUCCESS_FOLDER, GEMINI_FAILS_FOLDER]
 
 STR_NULL_VALUES = ["none", "nan", "nat", "", " "]
 
