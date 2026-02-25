@@ -8,7 +8,9 @@ def process_text(df, text_col, id_col, output_path, df_type, gemini_api_key):
     print("in process_text")
 
     print("in remove_chars")
-    df["clean_text_with_emojis"] = df[text_col].apply(remove_chars)
+    df[["clean_text_with_emojis", "hashtags"]] = df.apply(lambda row: remove_chars(row[text_col]), axis=1, result_type="expand")
+    df["hashtags_count"] = df["hashtags"].apply(lambda h: len(h.split(", ")) if "#" in h else 0)
+    df.to_csv(rf"{output_path}\{MID_RESULTS_FOLDER}\{df_type}\{df_type}_before_gemini.csv", index=False)
     df = process_with_gemini(df, "clean_text_with_emojis", output_path, id_col, df_type, gemini_api_key)
     print("in remove_emojis")
     df["fixed_text_no_emojis"] = df.apply(lambda row: remove_emojis(row, text_col), axis=1)
@@ -22,7 +24,8 @@ def complete_user_language(df, user_id_col):
         user_language_df = df.groupby(user_id_col)["post_language"].agg(lambda x: x.value_counts().idxmax() if not x.dropna().empty else None).reset_index()
         user_language_dict = user_language_df.set_index(user_id_col)["post_language"].to_dict()
         df["post_language"] = df.apply(lambda row: user_language_dict[row[user_id_col]]
-                                                   if str(row["post_language"]).lower() in STR_NULL_VALUES
+                                                   if (str(row["post_language"]).lower() in STR_NULL_VALUES)
+                                                      and (str(row[user_id_col]).lower() not in STR_NULL_VALUES)
                                                    else row["post_language"], axis=1)
     return df
 
@@ -33,6 +36,7 @@ def process_text_and_emojis(df, text_col, id_col, df_type, user_id_col, output_p
     df = process_text(df, text_col, id_col, output_path ,df_type, gemini_api_key)
     df = add_emoji_data(df, text_col)
     df = complete_user_language(df, user_id_col)
+    df.to_csv(rf"{output_path}\{MID_RESULTS_FOLDER}\{df_type}\{df_type}_processed_text_and_emojis.csv", index=False)
     return df
 
 
@@ -61,8 +65,8 @@ def count_posters_comments(posts_df, comms_df, posts_user_col, posts_id_col, com
 def clean_df(df, comms):
     print("in clean_df")
 
-    drop_cols = ["clean_text_with_emojis", "relevant_text", "original_text", "id", "id_y"]
-    rename_comms_cols = {"id_x": "id"}
+    drop_cols = ["clean_text_with_emojis", "relevant_text", "original_text", "id", "id_y", "id_right", "Unnamed: 0"]
+    rename_comms_cols = {"id_x": "id", "id_left": "id"}
 
     df.drop([col for col in df.columns if col in drop_cols], axis=1, inplace=True)
     if comms:
@@ -79,4 +83,4 @@ def save_csv_by_language(df, df_type, out_folder_path):
     for language in unique_languages_list:
         mini_df = df[df["post_language"] == language]
         full_out_path = fr"{out_folder_path}\{FINAL_RESULTS_FOLDER}\{df_type}\{df_type}_{str(language)}_csv.csv"
-        mini_df.to_csv(full_out_path)
+        mini_df.to_csv(full_out_path, index=False)

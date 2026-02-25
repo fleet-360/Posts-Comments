@@ -9,6 +9,14 @@ def make_dir(outpath_folder):
         os.makedirs(fr"{outpath_folder}\{folder_path}", exist_ok=True)
 
 
+def keep_relevant_profiles(profiles_df, df_path, profiles_user_id_col, df_user_id_col):
+    print("in keep_relevant_profiles")
+
+    df = pd.read_csv(df_path)
+    df_w_profiles = df[df[df_user_id_col].isin(profiles_df[profiles_user_id_col])]
+    return df_w_profiles
+
+
 # doesn't fully work - csv too big, tsv bad data/separator.
 def table_to_multi_sheet_excel(input_path, excel_path, rows_per_sheet=1_000_000):
     """

@@ -29,9 +29,15 @@ def remove_chars(text):
             # fix common liwc problems
             clean_text = fix_common_liwc_problems(clean_text, LIWC_DICT)
 
-            # remove \n, #
-            remove_chars_pattern = "\n|\\n|\\\\n|#"
+            # remove \n
+            remove_chars_pattern = "\n|\\n|\\\\n"
             clean_text = re.sub(remove_chars_pattern, " ", clean_text)
+
+            # remove hashtags
+            remove_hashtags_pattern = "#[^#\s]+"
+            hashtags_list = re.findall(remove_hashtags_pattern, clean_text)
+            hashtags_str_list = ", ".join(hashtags_list)
+            clean_text = re.sub(remove_hashtags_pattern, " ", clean_text)
 
             # replace @name with text
             at_replacement = "subInstagramname"
@@ -47,8 +53,8 @@ def remove_chars(text):
             clean_text = re.sub(replace_multiple_pattern, r"\1", clean_text)
 
             # print("clean text: ", clean_text)
-            return clean_text
+            return (clean_text, hashtags_str_list)
         else:
-            return text
+            return (text, "")
     except Exception as e:
         print("ERROR in remove_chars:", e)

@@ -107,32 +107,29 @@ async def process_dataframe(df: pd.DataFrame, text_col: str, id_col: str, gemini
     f.close()
 
 
-def keep_relevant_rows(df, text_col, df_type, output_path):
-    print("in keep_relevant_rows")
-
-    def _is_relevant(text):
-        # only keep rows that include either letters or emojis in the text column.
-        if str(text).lower() in STR_NULL_VALUES:
-            return False
+def is_relevant(text):
+    # only keep rows that include either letters or emojis in the text column.
+    if str(text).lower() in STR_NULL_VALUES:
+        return False
+    else:
+        relevant_text_pattern = f"[{LANGUAGE_PATTERN}{EMOJIS_RANGE}]"
+        found_text = re.findall(relevant_text_pattern, str(text))
+        if len(found_text) > 0:
+            return True
         else:
-            relevant_text_pattern = f"[{LANGUAGE_PATTERN}{EMOJIS_RANGE}]"
-            found_text = re.findall(relevant_text_pattern, str(text))
-            if len(found_text) > 0:
-                return True
-            else:
-                return False
+            return False
+
+
+def keep_relevant_rows(df, text_col, output_path):
+    print("in keep_relevant_rows")
 
     print("for GEMINI: original len of df:", len(df))
 
     if os.path.exists(output_path):
         # if past results exist, remove rows that already have a past result, by text_col.
-        existing_results = pd.read_csv(output_path)  # ,names=GEMINI_RESULT_COLUMNS, usecols=range(len(GEMINI_RESULT_COLUMNS))
-        df_w_gemini = pd.merge(df, existing_results, left_on=text_col, right_on="original_text", how="outer")
-        df_w_gemini["missing_response"] = df_w_gemini["gemini_status"].apply(lambda s: True if str(s).lower() in STR_NULL_VALUES else False)
-        df = df_w_gemini[df_w_gemini["missing_response"] == True]
-        df.drop([col for col in GEMINI_RESULT_COLUMNS + ["missing_response", "ex1", "ex2", "Unnamed: 0"] if col in df.columns], axis=1, inplace=True)
+        existing_results = pd.read_csv(output_path,names=GEMINI_RESULT_COLUMNS, usecols=range(len(GEMINI_RESULT_COLUMNS)))  #
+        df = df[~df[text_col].isin(existing_results["original_text"])]
 
-    df["relevant_text"] = df[text_col].apply(_is_relevant)
     filtered_df = df[df["relevant_text"] == True]
 
     # drop dups by text_col
@@ -145,11 +142,23 @@ def keep_relevant_rows(df, text_col, df_type, output_path):
 def merge_gemini_result(df, output_file_path, text_col):
     print("in merge_gemini_result")
 
-    gemini_result = pd.read_csv(output_file_path, names=GEMINI_RESULT_COLUMNS, usecols=range(len(GEMINI_RESULT_COLUMNS)))
-    # merge with gemini results from csv. merge by text instead of id
-    df_w_gemini = pd.merge(df, gemini_result, left_on=text_col, right_on="original_text", how="outer")
+    # gemini_result = pd.read_csv(output_file_path, names=GEMINI_RESULT_COLUMNS, usecols=range(len(GEMINI_RESULT_COLUMNS)))
+    # # merge with gemini results from csv. merge by text instead of id
+    # df_w_gemini = pd.merge(df, gemini_result, left_on=text_col, right_on="original_text", how="outer")
+
+    gemini_df = pd.read_csv(output_file_path, names=GEMINI_RESULT_COLUMNS, usecols=range(len(GEMINI_RESULT_COLUMNS)))
+    gemini_df = gemini_df.astype("string")  # pandas' nullable string dtype
+    gemini_pl = pl.from_dataframe(gemini_df)
+
+    df = df.astype("string")  # pandas' nullable string dtype
+    df_pl = pl.from_dataframe(df)
+
+    merged_pl = df_pl.join(gemini_pl, left_on=text_col, right_on="original_text", how="left")
+    df_w_gemini = merged_pl.to_pandas()
+
     # relevant text true and gemini_status none - failed, else none
-    df_w_gemini["gemini_status"] = df_w_gemini.apply(lambda row: "failed" if row["relevant_text"] == True and
+    df_w_gemini["gemini_status"] = df_w_gemini.apply(lambda row: "failed" if
+                                                                 row["relevant_text"] == True and
                                                                  str(row["gemini_status"]).lower() in STR_NULL_VALUES
                                                                  else row["gemini_status"], axis=1)
     return df_w_gemini
@@ -161,7 +170,7 @@ def save_gemini_fails(df, output_path, df_type):
     failed_df = df[df["gemini_status"] == "failed"]
     print(f"amount of gemini fails for df {df_type}: {len(failed_df)}")
     failed_file_path = fr"{output_path}\{GEMINI_FAILS_FOLDER}\{df_type}_gemini_fails.csv"
-    failed_df.to_csv(failed_file_path)
+    failed_df.to_csv(failed_file_path, index=False)
 
 
 def no_gemini_requests(df):
@@ -176,11 +185,14 @@ def no_gemini_requests(df):
 def process_with_gemini(df, text_col, output_path, id_col, df_type, gemini_api_key):
     print("in process_with_gemini")
 
+    df["relevant_text"] = df[text_col].apply(is_relevant)
+
     output_file_path = fr"{output_path}\{GEMINI_SUCCESS_FOLDER}\{df_type}_gemini_results.csv"
-    filtered_df = keep_relevant_rows(df, text_col, df_type, output_file_path)
+    filtered_df = keep_relevant_rows(df, text_col, output_file_path)
     if not filtered_df.empty:
         asyncio.run(process_dataframe(filtered_df, text_col, id_col, gemini_api_key, output_file_path))
         result_df = merge_gemini_result(df, output_file_path, text_col)
+        result_df.to_csv(rf"{output_path}\{MID_RESULTS_FOLDER}\{df_type}\{df_type}_merged_with_gemini.csv", index=False)
         save_gemini_fails(result_df, output_path, df_type)
     else:
         # process no gemini - add cols, status - none

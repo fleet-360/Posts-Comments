@@ -28,7 +28,8 @@ PROMPT_BODY = """
 
     Instructions:
     - Language Detection: 
-        Identify the primary language of the input text. If none detected, or the language is unclear or unknown, return None.
+        Identify the primary language of the input text. If none or several languages are detected, or the language is unclear or unknown, return "None".
+        Do not return names of countries that are listed in the text. Return only the detected primary language of the input text.
         Return the language in it's full english name, with the first letter capitalized (e.g., "English", "French", "German", etc).
     - Spelling Correction:
         Correct standard spelling errors (e.g., "becuse" $\rightarrow$ "because").
